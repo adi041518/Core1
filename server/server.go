@@ -81,7 +81,7 @@ func initServer(options *Options) {
 		}
 	} else {
 		slog.Info("server starting on " + port)
-		if err := server.Run(":0.0.0.0" + port); err != nil {
+		if err := server.Run("0.0.0.0:" + port); err != nil {
 			log.Fatal(err)
 		}
 	}
