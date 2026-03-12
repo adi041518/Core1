@@ -845,7 +845,7 @@ func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[st
 		if err != nil || !found {
 			continue
 		}
-
+		log.Println("name is : ", cached)
 		if name, ok := cached["name"]; ok {
 
 			nameField := field[:len(field)-2] + "Name"
