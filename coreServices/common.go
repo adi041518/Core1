@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/adi041518/Core1/util"
@@ -872,5 +873,144 @@ func BuildUpdateFilter(data map[string]interface{}, code string) map[string]inte
 // 		}
 // 	}
 
-// 	return cachedResults, keys
-// }
+//		return cachedResults, keys
+//	}
+//
+// Global cache to store recently fetched names to avoid repeated Redis calls
+var nameCache = make(map[string]map[string]interface{})
+var cacheMutex sync.RWMutex
+
+func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[string]map[string]interface{} {
+
+	fields := []string{
+		"patientId",
+		"doctorId",
+		"hospitalId",
+		"tenantId",
+		"createdBy",
+		"updatedBy",
+	}
+
+	cachedResults := make(map[string]map[string]interface{})
+
+	// Collect all unique keys that need to be fetched
+	keysToFetch := make([]string, 0, len(fields))
+
+	for _, field := range fields {
+		key, ok := data[field].(string)
+		if !ok || key == "" {
+			continue
+		}
+
+		// Check if already in memory cache
+		cacheMutex.RLock()
+		if cached, exists := nameCache[key]; exists {
+			cachedResults[key] = cached
+			if name, ok := cached["name"]; ok {
+				nameField := field[:len(field)-2] + "Name"
+				data[nameField] = name
+			}
+			cacheMutex.RUnlock()
+			continue
+		}
+		cacheMutex.RUnlock()
+
+		keysToFetch = append(keysToFetch, key)
+	}
+
+	// Batch fetch all missing keys from Redis
+	if len(keysToFetch) > 0 {
+		for _, key := range keysToFetch {
+			var cached map[string]interface{}
+			found, err := redis.GetCache(c, key, &cached)
+			if err != nil || !found {
+				continue
+			}
+
+			// Store in memory cache
+			cacheMutex.Lock()
+			nameCache[key] = cached
+			cacheMutex.Unlock()
+
+			cachedResults[key] = cached
+
+			// Find which field this key belongs to and attach the name
+			for _, field := range fields {
+				if fieldKey, ok := data[field].(string); ok && fieldKey == key {
+					if name, ok := cached["name"]; ok {
+						nameField := field[:len(field)-2] + "Name"
+						data[nameField] = name
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return cachedResults
+}
+
+// Optimized version for batch processing multiple records
+func AttachNamesFromRedisBatch(c *gin.Context, records []map[string]interface{}) {
+	if len(records) == 0 {
+		return
+	}
+
+	// Collect all unique keys from all records
+	allKeys := make(map[string]bool)
+	fields := []string{
+		"patientId", "doctorId", "hospitalId", "tenantId", "createdBy", "updatedBy",
+	}
+
+	for _, record := range records {
+		for _, field := range fields {
+			if key, ok := record[field].(string); ok && key != "" {
+				allKeys[key] = true
+			}
+		}
+	}
+
+	// Check memory cache first and collect missing keys
+	keysToFetch := make([]string, 0)
+	cachedData := make(map[string]map[string]interface{})
+
+	for key := range allKeys {
+		cacheMutex.RLock()
+		if cached, exists := nameCache[key]; exists {
+			cachedData[key] = cached
+		} else {
+			keysToFetch = append(keysToFetch, key)
+		}
+		cacheMutex.RUnlock()
+	}
+
+	// Batch fetch missing keys from Redis
+	for _, key := range keysToFetch {
+		var cached map[string]interface{}
+		found, err := redis.GetCache(c, key, &cached)
+		if err != nil || !found {
+			continue
+		}
+
+		// Store in memory cache
+		cacheMutex.Lock()
+		nameCache[key] = cached
+		cacheMutex.Unlock()
+
+		cachedData[key] = cached
+	}
+
+	// Attach names to all records
+	for _, record := range records {
+		for _, field := range fields {
+			if key, ok := record[field].(string); ok && key != "" {
+				if cached, exists := cachedData[key]; exists {
+					if name, ok := cached["name"]; ok {
+						nameField := field[:len(field)-2] + "Name"
+						record[nameField] = name
+					}
+				}
+			}
+		}
+	}
+}
