@@ -833,23 +833,38 @@ func AttachNamesFromRedis(c context.Context, data map[string]interface{}) (map[s
 		"updatedBy",
 	}
 
+	prefixMap := map[string]string{
+		"patientId":  "PATIENT#",
+		"doctorId":   "DOCTOR#",
+		"hospitalId": "HOSPITAL#",
+		"tenantId":   "TENANT#",
+	}
+
 	cachedResults := make(map[string]map[string]interface{})
 	var keys []string
+
 	for _, field := range fields {
 
-		key, ok := data[field].(string)
-		if !ok || key == "" {
+		id, ok := data[field].(string)
+		if !ok || id == "" {
 			continue
 		}
-		keys = append(keys, key)
-		var cached map[string]interface{}
 
-		found, err := redis.GetCache(c, key, &cached)
+		// build redis key
+		redisKey := id
+		if prefix, exists := prefixMap[field]; exists {
+			redisKey = prefix + id
+		}
+
+		keys = append(keys, redisKey)
+
+		var cached map[string]interface{}
+		found, err := redis.GetCache(c, redisKey, &cached)
 		if err != nil || !found {
 			continue
 		}
 
-		cachedResults[key] = cached
+		cachedResults[redisKey] = cached
 
 		if name, ok := cached["name"]; ok {
 			nameField := field[:len(field)-2] + "Name"
