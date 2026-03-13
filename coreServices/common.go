@@ -822,55 +822,55 @@ func BuildUpdateFilter(data map[string]interface{}, code string) map[string]inte
 	return updateFilter
 }
 
-func AttachNamesFromRedis(c context.Context, data map[string]interface{}) (map[string]map[string]interface{}, []string) {
+// func AttachNamesFromRedis(c context.Context, data map[string]interface{}) (map[string]map[string]interface{}, []string) {
 
-	fields := []string{
-		"patientId",
-		"doctorId",
-		"hospitalId",
-		"tenantId",
-		"createdBy",
-		"updatedBy",
-	}
+// 	fields := []string{
+// 		"patientId",
+// 		"doctorId",
+// 		"hospitalId",
+// 		"tenantId",
+// 		"createdBy",
+// 		"updatedBy",
+// 	}
 
-	prefixMap := map[string]string{
-		"patientId":  "PATIENT#",
-		"doctorId":   "DOCTOR#",
-		"hospitalId": "HOSPITAL#",
-		"tenantId":   "TENANT#",
-	}
+// 	prefixMap := map[string]string{
+// 		"patientId":  "PATIENT#",
+// 		"doctorId":   "DOCTOR#",
+// 		"hospitalId": "HOSPITAL#",
+// 		"tenantId":   "TENANT#",
+// 	}
 
-	cachedResults := make(map[string]map[string]interface{})
-	var keys []string
+// 	cachedResults := make(map[string]map[string]interface{})
+// 	var keys []string
 
-	for _, field := range fields {
+// 	for _, field := range fields {
 
-		id, ok := data[field].(string)
-		if !ok || id == "" {
-			continue
-		}
+// 		id, ok := data[field].(string)
+// 		if !ok || id == "" {
+// 			continue
+// 		}
 
-		// build redis key
-		redisKey := id
-		if prefix, exists := prefixMap[field]; exists {
-			redisKey = prefix + id
-		}
+// 		// build redis key
+// 		redisKey := id
+// 		if prefix, exists := prefixMap[field]; exists {
+// 			redisKey = prefix + id
+// 		}
 
-		keys = append(keys, redisKey)
+// 		keys = append(keys, redisKey)
 
-		var cached map[string]interface{}
-		found, err := redis.GetCache(c, redisKey, &cached)
-		if err != nil || !found {
-			continue
-		}
+// 		var cached map[string]interface{}
+// 		found, err := redis.GetCache(c, redisKey, &cached)
+// 		if err != nil || !found {
+// 			continue
+// 		}
 
-		cachedResults[redisKey] = cached
+// 		cachedResults[redisKey] = cached
 
-		if name, ok := cached["name"]; ok {
-			nameField := field[:len(field)-2] + "Name"
-			data[nameField] = name
-		}
-	}
+// 		if name, ok := cached["name"]; ok {
+// 			nameField := field[:len(field)-2] + "Name"
+// 			data[nameField] = name
+// 		}
+// 	}
 
-	return cachedResults, keys
-}
+// 	return cachedResults, keys
+// }
