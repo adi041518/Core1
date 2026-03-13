@@ -875,10 +875,24 @@ func BuildUpdateFilter(data map[string]interface{}, code string) map[string]inte
 
 //		return cachedResults, keys
 //	}
-//
-// Global cache to store recently fetched names to avoid repeated Redis calls
 var nameCache = make(map[string]map[string]interface{})
 var cacheMutex sync.RWMutex
+
+// Redis key prefix mapping
+var prefixMap = map[string]string{
+	"patientId":  "PATIENT#",
+	"doctorId":   "DOCTOR#",
+	"hospitalId": "HOSPITAL#",
+	"tenantId":   "TENANT#",
+}
+
+// Build redis key from field + id
+func buildRedisKey(field, id string) string {
+	if prefix, ok := prefixMap[field]; ok {
+		return prefix + id
+	}
+	return id
+}
 
 func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[string]map[string]interface{} {
 
@@ -892,56 +906,68 @@ func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[st
 	}
 
 	cachedResults := make(map[string]map[string]interface{})
-
-	// Collect all unique keys that need to be fetched
 	keysToFetch := make([]string, 0, len(fields))
 
 	for _, field := range fields {
-		key, ok := data[field].(string)
-		if !ok || key == "" {
+
+		id, ok := data[field].(string)
+		if !ok || id == "" {
 			continue
 		}
 
-		// Check if already in memory cache
+		redisKey := buildRedisKey(field, id)
+
+		// Check memory cache first
 		cacheMutex.RLock()
-		if cached, exists := nameCache[key]; exists {
-			cachedResults[key] = cached
+		if cached, exists := nameCache[redisKey]; exists {
+			cacheMutex.RUnlock()
+
+			cachedResults[redisKey] = cached
+
 			if name, ok := cached["name"]; ok {
 				nameField := field[:len(field)-2] + "Name"
 				data[nameField] = name
 			}
-			cacheMutex.RUnlock()
 			continue
 		}
 		cacheMutex.RUnlock()
 
-		keysToFetch = append(keysToFetch, key)
+		keysToFetch = append(keysToFetch, redisKey)
 	}
 
-	// Batch fetch all missing keys from Redis
-	if len(keysToFetch) > 0 {
-		for _, key := range keysToFetch {
-			var cached map[string]interface{}
-			found, err := redis.GetCache(c, key, &cached)
-			if err != nil || !found {
+	// Fetch missing keys from Redis
+	for _, redisKey := range keysToFetch {
+
+		var cached map[string]interface{}
+
+		found, err := redis.GetCache(c, redisKey, &cached)
+		if err != nil || !found {
+			log.Println("Redis key not found:", redisKey)
+			continue
+		}
+
+		cacheMutex.Lock()
+		nameCache[redisKey] = cached
+		cacheMutex.Unlock()
+
+		cachedResults[redisKey] = cached
+
+		// attach name to record
+		for _, field := range fields {
+
+			id, ok := data[field].(string)
+			if !ok || id == "" {
 				continue
 			}
 
-			// Store in memory cache
-			cacheMutex.Lock()
-			nameCache[key] = cached
-			cacheMutex.Unlock()
+			key := buildRedisKey(field, id)
 
-			cachedResults[key] = cached
+			if key == redisKey {
 
-			// Find which field this key belongs to and attach the name
-			for _, field := range fields {
-				if fieldKey, ok := data[field].(string); ok && fieldKey == key {
-					if name, ok := cached["name"]; ok {
-						nameField := field[:len(field)-2] + "Name"
-						data[nameField] = name
-					}
-					break
+				if name, ok := cached["name"]; ok {
+
+					nameField := field[:len(field)-2] + "Name"
+					data[nameField] = name
 				}
 			}
 		}
@@ -950,49 +976,67 @@ func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[st
 	return cachedResults
 }
 
-// Optimized version for batch processing multiple records
 func AttachNamesFromRedisBatch(c *gin.Context, records []map[string]interface{}) {
+
 	if len(records) == 0 {
 		return
 	}
 
-	// Collect all unique keys from all records
-	allKeys := make(map[string]bool)
 	fields := []string{
-		"patientId", "doctorId", "hospitalId", "tenantId", "createdBy", "updatedBy",
+		"patientId",
+		"doctorId",
+		"hospitalId",
+		"tenantId",
+		"createdBy",
+		"updatedBy",
 	}
 
+	allKeys := make(map[string]bool)
+
+	// Collect all unique keys
 	for _, record := range records {
+
 		for _, field := range fields {
-			if key, ok := record[field].(string); ok && key != "" {
-				allKeys[key] = true
+
+			id, ok := record[field].(string)
+			if !ok || id == "" {
+				continue
 			}
+
+			redisKey := buildRedisKey(field, id)
+			allKeys[redisKey] = true
 		}
 	}
 
-	// Check memory cache first and collect missing keys
 	keysToFetch := make([]string, 0)
 	cachedData := make(map[string]map[string]interface{})
 
+	// Check memory cache
 	for key := range allKeys {
+
 		cacheMutex.RLock()
 		if cached, exists := nameCache[key]; exists {
+
 			cachedData[key] = cached
+
 		} else {
+
 			keysToFetch = append(keysToFetch, key)
 		}
 		cacheMutex.RUnlock()
 	}
 
-	// Batch fetch missing keys from Redis
+	// Fetch missing from Redis
 	for _, key := range keysToFetch {
+
 		var cached map[string]interface{}
+
 		found, err := redis.GetCache(c, key, &cached)
 		if err != nil || !found {
+			log.Println("Redis key not found:", key)
 			continue
 		}
 
-		// Store in memory cache
 		cacheMutex.Lock()
 		nameCache[key] = cached
 		cacheMutex.Unlock()
@@ -1000,15 +1044,24 @@ func AttachNamesFromRedisBatch(c *gin.Context, records []map[string]interface{})
 		cachedData[key] = cached
 	}
 
-	// Attach names to all records
+	// Attach names to records
 	for _, record := range records {
+
 		for _, field := range fields {
-			if key, ok := record[field].(string); ok && key != "" {
-				if cached, exists := cachedData[key]; exists {
-					if name, ok := cached["name"]; ok {
-						nameField := field[:len(field)-2] + "Name"
-						record[nameField] = name
-					}
+
+			id, ok := record[field].(string)
+			if !ok || id == "" {
+				continue
+			}
+
+			key := buildRedisKey(field, id)
+
+			if cached, exists := cachedData[key]; exists {
+
+				if name, ok := cached["name"]; ok {
+
+					nameField := field[:len(field)-2] + "Name"
+					record[nameField] = name
 				}
 			}
 		}
