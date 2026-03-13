@@ -834,14 +834,14 @@ func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[st
 	}
 
 	cachedResults := make(map[string]map[string]interface{})
-
+	var keys []string
 	for _, field := range fields {
 
 		key, ok := data[field].(string)
 		if !ok || key == "" {
 			continue
 		}
-
+		keys = append(keys, key)
 		var cached map[string]interface{}
 
 		found, err := redis.GetCache(c, key, &cached)
