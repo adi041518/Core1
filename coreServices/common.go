@@ -822,7 +822,7 @@ func BuildUpdateFilter(data map[string]interface{}, code string) map[string]inte
 	return updateFilter
 }
 
-func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[string]map[string]interface{} {
+func AttachNamesFromRedis(c context.Context, data map[string]interface{}) (map[string]map[string]interface{}, []string) {
 
 	fields := []string{
 		"patientId",
@@ -857,5 +857,5 @@ func AttachNamesFromRedis(c context.Context, data map[string]interface{}) map[st
 		}
 	}
 
-	return cachedResults
+	return cachedResults, keys
 }
